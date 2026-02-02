@@ -1,0 +1,9 @@
+# Production dependencies
+-r base.txt
+
+# WSGI Server
+gunicorn==21.2.0
+
+# Monitoring
+azure-monitor-opentelemetry==1.0.0
+azure-identity==1.14.0
