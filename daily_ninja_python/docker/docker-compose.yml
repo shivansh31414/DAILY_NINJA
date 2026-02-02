@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: daily_ninja_postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-daily_ninja}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-devpassword}
+      POSTGRES_DB: ${DATABASE_NAME:-daily_ninja}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U daily_ninja"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: daily_ninja_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: daily_ninja_backend
+    environment:
+      DATABASE_URL: postgresql://${DATABASE_USER:-daily_ninja}:${DATABASE_PASSWORD:-devpassword}@postgres:5432/${DATABASE_NAME:-daily_ninja}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      ENV: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./config:/app/config
+
+  # Streamlit Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: daily_ninja_frontend
+    environment:
+      API_BASE_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app/frontend
+      - ./config:/app/config
+
+  # Celery Worker
+  celery:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: daily_ninja_celery
+    command: celery -A workers.celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://${DATABASE_USER:-daily_ninja}:${DATABASE_PASSWORD:-devpassword}@postgres:5432/${DATABASE_NAME:-daily_ninja}
+      CELERY_BROKER_URL: redis://redis:6379/1
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app/backend
+      - ./workers:/app/workers
+      - ./config:/app/config
+
+volumes:
+  postgres_data:
+  redis_data:

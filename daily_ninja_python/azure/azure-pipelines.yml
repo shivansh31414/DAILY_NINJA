@@ -1,0 +1,98 @@
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  imageName: 'daily-ninja'
+  containerRegistry: 'dailyninjaacr'
+  pythonVersion: '3.11'
+
+stages:
+  - stage: Build
+    displayName: Build and Test
+    jobs:
+      - job: Test
+        displayName: Run Tests
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+            displayName: 'Use Python $(pythonVersion)'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements/dev.txt
+            displayName: 'Install dependencies'
+
+          - script: |
+              black --check backend/ workers/ tests/
+              flake8 backend/ workers/ tests/
+            displayName: 'Code quality checks'
+
+          - script: |
+              pytest tests/unit -v --cov=backend --cov=workers --cov-report=xml
+            displayName: 'Run unit tests'
+
+          - task: PublishCodeCoverageResults@1
+            inputs:
+              codeCoverageTool: Cobertura
+              summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+            displayName: 'Publish coverage'
+
+      - job: BuildDocker
+        displayName: Build Docker Images
+        dependsOn: Test
+        condition: succeeded()
+        steps:
+          - task: Docker@2
+            displayName: Build and push backend image
+            inputs:
+              command: buildAndPush
+              repository: $(containerRegistry)/$(imageName)-backend
+              dockerfile: docker/Dockerfile.backend
+              containerRegistry: $(containerRegistry)
+              tags: |
+                latest
+                $(Build.BuildId)
+
+          - task: Docker@2
+            displayName: Build and push frontend image
+            inputs:
+              command: buildAndPush
+              repository: $(containerRegistry)/$(imageName)-frontend
+              dockerfile: docker/Dockerfile.frontend
+              containerRegistry: $(containerRegistry)
+              tags: |
+                latest
+                $(Build.BuildId)
+
+  - stage: Deploy
+    displayName: Deploy to Azure
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployProd
+        displayName: Deploy to Production
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebAppContainer@1
+                  displayName: Deploy Backend
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    appName: daily-ninja-backend
+                    imageName: $(containerRegistry).azurecr.io/$(imageName)-backend:$(Build.BuildId)
+
+                - task: AzureWebAppContainer@1
+                  displayName: Deploy Frontend
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    appName: daily-ninja-frontend
+                    imageName: $(containerRegistry).azurecr.io/$(imageName)-frontend:$(Build.BuildId)
