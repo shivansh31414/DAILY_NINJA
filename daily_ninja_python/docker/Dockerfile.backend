@@ -2,21 +2,32 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (includes ODBC for Azure SQL)
 RUN apt-get update && apt-get install -y \
     gcc \
+    curl \
+    gnupg2 \
     postgresql-client \
+    unixodbc-dev \
+    && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
+    && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y msodbcsql18 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
-COPY requirements/prod.txt .
+COPY requirements/base.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r prod.txt
+RUN pip install --no-cache-dir -r base.txt
 
 # Copy application
 COPY backend/ ./backend/
 COPY config/ ./config/
+
+# Environment variables
+ENV FLASK_ENV=production
+ENV PORT=8000
 
 # Expose port
 EXPOSE 8000
@@ -25,5 +36,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run application
-CMD ["gunicorn", "backend.app.main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+# Run Flask app with Gunicorn
+CMD ["gunicorn", "backend.run:app", "--workers", "4", "--bind", "0.0.0.0:8000"]

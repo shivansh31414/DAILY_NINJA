@@ -41,15 +41,24 @@ st.markdown("""
 
 # ============ DATA FUNCTIONS ============
 def load_data():
-    """Load user data from JSON file."""
+    """Load user data from JSON file with deduplication."""
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     defaults = {"todos": [], "activity": {}, "streak": 0, "last_date": None}
     if DATA_FILE.exists():
         data = json.loads(DATA_FILE.read_text())
-        # Merge with defaults to ensure all keys exist
         for key in defaults:
             if key not in data:
                 data[key] = defaults[key]
+        # Deduplicate todos on load
+        seen, unique_todos = set(), []
+        for todo in data.get("todos", []):
+            task_key = todo.get("task", "").lower().strip()
+            if task_key and task_key not in seen:
+                seen.add(task_key)
+                unique_todos.append(todo)
+        if len(unique_todos) != len(data["todos"]):
+            data["todos"] = unique_todos
+            DATA_FILE.write_text(json.dumps(data, indent=2))  # Save cleaned data
         return data
     return defaults
 
@@ -63,22 +72,31 @@ def init_session():
         st.session_state.data = load_data()
 
 # ============ STREAK LOGIC ============
+def log_activity():
+    """Log activity for today (called when completing tasks or clicking Log Today)."""
+    data = st.session_state.data
+    today = datetime.now().strftime("%Y-%m-%d")
+    data["activity"][today] = data["activity"].get(today, 0) + 1
+    save_data(data)
+
 def update_streak():
-    """Update streak based on today's activity."""
+    """Recalculate streak based on consecutive days with activity."""
     data = st.session_state.data
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
+    # Only update streak once per day
     if data["last_date"] == today:
-        return  # Already logged today
+        return
+    
+    # Streak continues if we logged yesterday, otherwise resets to 1
     if data["last_date"] == yesterday:
         data["streak"] += 1
     else:
-        data["streak"] = 1 if data["last_date"] != today else data["streak"]
+        data["streak"] = 1
     
     data["last_date"] = today
-    data["activity"][today] = data["activity"].get(today, 0) + 1
-    save_data(data)
+    log_activity()  # Also log activity when updating streak
 
 # ============ HEATMAP ============
 def render_heatmap():
@@ -141,13 +159,23 @@ def main():
     # --- Streak Section ---
     col1, col2 = st.columns([1, 3])
     with col1:
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_count = data["activity"].get(today, 0)
+        
         st.markdown(f'''
         <div class="stat-card">
             <h2>🔥 {data["streak"]}</h2>
             <p>Day Streak</p>
         </div>
         ''', unsafe_allow_html=True)
-        st.write("")  # Spacer
+        st.write("")
+        st.markdown(f'''
+        <div class="stat-card">
+            <h2>✅ {today_count}</h2>
+            <p>Tasks Today</p>
+        </div>
+        ''', unsafe_allow_html=True)
+        st.write("")
         if st.button("✅ Log Today", use_container_width=True):
             update_streak()
             st.rerun()
@@ -155,11 +183,20 @@ def main():
     # --- Todo Section ---
     with col2:
         st.subheader("📝 Todo List")
-        new_task = st.text_input("Add task", placeholder="What needs to be done?", label_visibility="collapsed")
-        if new_task:
-            data["todos"].append({"task": new_task, "done": False})
-            save_data(data)
-            st.rerun()
+        
+        # Use form to prevent duplicate submissions
+        with st.form("add_task_form", clear_on_submit=True):
+            new_task = st.text_input("Add task", placeholder="What needs to be done?", label_visibility="collapsed")
+            submitted = st.form_submit_button("➕ Add Task", use_container_width=True)
+            if submitted and new_task.strip():
+                # Check for duplicates (case-insensitive)
+                existing = {t.get("task", "").lower().strip() for t in data["todos"]}
+                if new_task.lower().strip() not in existing:
+                    data["todos"].append({"task": new_task.strip(), "done": False})
+                    save_data(data)
+                    st.rerun()
+                else:
+                    st.warning("Task already exists!")
         
         for i, todo in enumerate(data["todos"]):
             # Ensure todo has required keys
@@ -170,6 +207,9 @@ def main():
                 done = st.checkbox("done", is_done, key=f"chk_{i}", label_visibility="collapsed")
                 if done != is_done:
                     data["todos"][i] = {"task": task_text, "done": done}
+                    # Log activity when task is completed (contributes to heatmap)
+                    if done and not is_done:
+                        log_activity()
                     save_data(data)
             with c2:
                 style = "~~" if is_done else ""
