@@ -1,21 +1,31 @@
 {
   "todos": [
-    {"task": "Build frontend UI", "done": true},
-    {"task": "Add streak counter", "done": true},
-    {"task": "Create heatmap", "done": false}
+    {
+      "task": "Build frontend UI",
+      "done": true
+    },
+    {
+      "task": "Add streak counter",
+      "done": true
+    },
+    {
+      "task": "Create heatmap",
+      "done": true
+    },
+    {
+      "task": "Workout",
+      "done": true
+    }
   ],
   "activity": {
+    "2026-02-08": 6,
     "2026-02-07": 3,
     "2026-02-06": 2,
     "2026-02-05": 4,
     "2026-02-04": 1,
     "2026-02-03": 5,
-    "2026-02-01": 2,
-    "2026-01-30": 3,
-    "2026-01-28": 1,
-    "2026-01-25": 4,
-    "2026-01-20": 2
+    "2026-02-01": 2
   },
-  "streak": 5,
-  "last_date": "2026-02-07"
+  "streak": 6,
+  "last_date": "2026-02-08"
 }
