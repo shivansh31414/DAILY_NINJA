@@ -8,6 +8,23 @@ from pathlib import Path
 st.set_page_config(page_title="Daily Ninja 🥷", page_icon="🥷", layout="wide")
 DATA_FILE = Path(__file__).parent / "data" / "user_data.json"
 
+# Task categories with colors
+CATEGORIES = {
+    "work": {"emoji": "💼", "color": "#3b82f6"},
+    "personal": {"emoji": "🏠", "color": "#8b5cf6"},
+    "health": {"emoji": "💪", "color": "#10b981"},
+    "learning": {"emoji": "📚", "color": "#f59e0b"},
+}
+
+# Streak milestones for badges
+BADGES = [
+    {"days": 7, "emoji": "🥉", "name": "Week Warrior"},
+    {"days": 30, "emoji": "🥈", "name": "Monthly Master"},
+    {"days": 100, "emoji": "🥇", "name": "Century Ninja"},
+    {"days": 365, "emoji": "🏆", "name": "Legendary"},
+]
+DATA_FILE = Path(__file__).parent / "data" / "user_data.json"
+
 # ============ CUSTOM CSS ============
 st.markdown("""
 <style>
@@ -36,6 +53,27 @@ st.markdown("""
 .cell:hover { transform: scale(1.5); z-index: 10; box-shadow: 0 0 10px rgba(57, 211, 83, 0.5); }
 /* Hide Streamlit branding */
 #MainMenu, footer, header { visibility: hidden; }
+/* Badges */
+.badge { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px;
+    background: linear-gradient(135deg, #1a1a2e, #16213e); border: 2px solid #39d353; margin: 4px; }
+.badge.locked { opacity: 0.4; border-color: #30363d; }
+.badge span { font-size: 1.2rem; }
+.badge-name { color: #8b949e; font-size: 0.8rem; }
+/* Category tags */
+.category-tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; 
+    font-weight: 500; margin-left: 8px; }
+/* Ninja slash animation */
+@keyframes ninjaSlash {
+    0% { transform: scale(1) rotate(0deg); opacity: 1; }
+    50% { transform: scale(1.5) rotate(180deg); opacity: 0.8; }
+    100% { transform: scale(0) rotate(360deg); opacity: 0; }
+}
+.slash-effect { animation: ninjaSlash 0.5s ease-out; position: absolute; font-size: 2rem; }
+/* Analytics cards */
+.analytics-card { background: #0d1117; border: 1px solid #21262d; border-radius: 10px; padding: 1rem;
+    text-align: center; }
+.analytics-card h3 { color: #39d353; margin: 0; font-size: 1.5rem; }
+.analytics-card p { color: #8b949e; margin: 0.5rem 0 0 0; font-size: 0.85rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -43,7 +81,7 @@ st.markdown("""
 def load_data():
     """Load user data from JSON file with deduplication."""
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    defaults = {"todos": [], "activity": {}, "streak": 0, "last_date": None}
+    defaults = {"todos": [], "activity": {}, "streak": 0, "last_date": None, "longest_streak": 0}
     if DATA_FILE.exists():
         data = json.loads(DATA_FILE.read_text())
         for key in defaults:
@@ -58,7 +96,7 @@ def load_data():
                 unique_todos.append(todo)
         if len(unique_todos) != len(data["todos"]):
             data["todos"] = unique_todos
-            DATA_FILE.write_text(json.dumps(data, indent=2))  # Save cleaned data
+            DATA_FILE.write_text(json.dumps(data, indent=2))
         return data
     return defaults
 
@@ -85,18 +123,41 @@ def update_streak():
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
-    # Only update streak once per day
     if data["last_date"] == today:
         return
     
-    # Streak continues if we logged yesterday, otherwise resets to 1
     if data["last_date"] == yesterday:
         data["streak"] += 1
     else:
         data["streak"] = 1
     
+    # Track longest streak
+    data["longest_streak"] = max(data.get("longest_streak", 0), data["streak"])
     data["last_date"] = today
-    log_activity()  # Also log activity when updating streak
+    log_activity()
+
+# ============ ANALYTICS ============
+def get_weekly_stats():
+    """Calculate stats for the last 7 days."""
+    data = st.session_state.data
+    today = datetime.now()
+    week_dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    tasks_done = sum(data["activity"].get(d, 0) for d in week_dates)
+    active_days = sum(1 for d in week_dates if data["activity"].get(d, 0) > 0)
+    return {"tasks": tasks_done, "active_days": active_days, "missed": 7 - active_days}
+
+def get_monthly_stats():
+    """Calculate stats for the last 30 days."""
+    data = st.session_state.data
+    today = datetime.now()
+    month_dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(30)]
+    tasks_done = sum(data["activity"].get(d, 0) for d in month_dates)
+    active_days = sum(1 for d in month_dates if data["activity"].get(d, 0) > 0)
+    return {"tasks": tasks_done, "active_days": active_days, "missed": 30 - active_days}
+
+def get_earned_badges(streak):
+    """Get list of badges with earned/locked status."""
+    return [{"badge": b, "earned": streak >= b["days"]} for b in BADGES]
 
 # ============ HEATMAP ============
 def render_heatmap():
@@ -156,75 +217,140 @@ def main():
     </div>
     ''', unsafe_allow_html=True)
     
-    # --- Streak Section ---
-    col1, col2 = st.columns([1, 3])
+    # --- Stats Row ---
+    col1, col2, col3, col4 = st.columns(4)
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_count = data["activity"].get(today, 0)
+    
     with col1:
-        today = datetime.now().strftime("%Y-%m-%d")
-        today_count = data["activity"].get(today, 0)
-        
-        st.markdown(f'''
-        <div class="stat-card">
-            <h2>🔥 {data["streak"]}</h2>
-            <p>Day Streak</p>
-        </div>
-        ''', unsafe_allow_html=True)
-        st.write("")
-        st.markdown(f'''
-        <div class="stat-card">
-            <h2>✅ {today_count}</h2>
-            <p>Tasks Today</p>
-        </div>
-        ''', unsafe_allow_html=True)
-        st.write("")
+        st.markdown(f'<div class="stat-card"><h2>🔥 {data["streak"]}</h2><p>Day Streak</p></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="stat-card"><h2>✅ {today_count}</h2><p>Tasks Today</p></div>', unsafe_allow_html=True)
+    with col3:
+        st.markdown(f'<div class="stat-card"><h2>🏆 {data.get("longest_streak", 0)}</h2><p>Best Streak</p></div>', unsafe_allow_html=True)
+    with col4:
         if st.button("✅ Log Today", use_container_width=True):
             update_streak()
             st.rerun()
     
-    # --- Todo Section ---
-    with col2:
-        st.subheader("📝 Todo List")
-        
-        # Use form to prevent duplicate submissions
-        with st.form("add_task_form", clear_on_submit=True):
-            new_task = st.text_input("Add task", placeholder="What needs to be done?", label_visibility="collapsed")
-            submitted = st.form_submit_button("➕ Add Task", use_container_width=True)
-            if submitted and new_task.strip():
-                # Check for duplicates (case-insensitive)
-                existing = {t.get("task", "").lower().strip() for t in data["todos"]}
-                if new_task.lower().strip() not in existing:
-                    data["todos"].append({"task": new_task.strip(), "done": False})
-                    save_data(data)
-                    st.rerun()
-                else:
-                    st.warning("Task already exists!")
-        
-        for i, todo in enumerate(data["todos"]):
-            # Ensure todo has required keys
-            is_done = todo.get("done", False)
-            task_text = todo.get("task", str(todo) if isinstance(todo, str) else "")
-            c1, c2, c3 = st.columns([0.5, 8, 1])
-            with c1:
-                done = st.checkbox("done", is_done, key=f"chk_{i}", label_visibility="collapsed")
-                if done != is_done:
-                    data["todos"][i] = {"task": task_text, "done": done}
-                    # Log activity when task is completed (contributes to heatmap)
-                    if done and not is_done:
-                        log_activity()
-                    save_data(data)
-            with c2:
-                style = "~~" if is_done else ""
-                st.write(f"{style}{task_text}{style}")
-            with c3:
-                if st.button("🗑️", key=f"del_{i}"):
-                    data["todos"].pop(i)
-                    save_data(data)
-                    st.rerun()
+    st.write("")
     
-    # --- Heatmap Section ---
-    st.divider()
-    total = sum(data["activity"].values())
-    st.subheader(f"📊 {total} contributions in the last year")
-    render_heatmap()
+    # --- Badges Section ---
+    badges_html = "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:1rem'>"
+    for item in get_earned_badges(data["streak"]):
+        b, earned = item["badge"], item["earned"]
+        status = "" if earned else " locked"
+        badges_html += f'<div class="badge{status}"><span>{b["emoji"]}</span><span class="badge-name">{b["name"]} ({b["days"]}d)</span></div>'
+    badges_html += "</div>"
+    st.markdown(badges_html, unsafe_allow_html=True)
+    
+    # --- Main Content ---
+    tab1, tab2, tab3 = st.tabs(["📝 Tasks", "📊 Analytics", "🗓️ Heatmap"])
+    
+    # ===== TASKS TAB =====
+    with tab1:
+        col_form, col_list = st.columns([1, 2])
+        
+        with col_form:
+            st.subheader("Add New Task")
+            with st.form("add_task_form", clear_on_submit=True):
+                new_task = st.text_input("Task", placeholder="What needs to be done?")
+                category = st.selectbox("Category", list(CATEGORIES.keys()), format_func=lambda x: f"{CATEGORIES[x]['emoji']} {x.title()}")
+                due_date = st.date_input("Due Date (optional)", value=None, min_value=datetime.now().date())
+                submitted = st.form_submit_button("➕ Add Task", use_container_width=True)
+                
+                if submitted and new_task.strip():
+                    existing = {t.get("task", "").lower().strip() for t in data["todos"]}
+                    if new_task.lower().strip() not in existing:
+                        data["todos"].append({
+                            "task": new_task.strip(),
+                            "done": False,
+                            "category": category,
+                            "due": due_date.isoformat() if due_date else None
+                        })
+                        save_data(data)
+                        st.rerun()
+                    else:
+                        st.warning("Task already exists!")
+        
+        with col_list:
+            st.subheader("Your Tasks")
+            
+            # Filter by category
+            filter_cat = st.selectbox("Filter", ["all"] + list(CATEGORIES.keys()), 
+                format_func=lambda x: "📋 All" if x == "all" else f"{CATEGORIES[x]['emoji']} {x.title()}")
+            
+            for i, todo in enumerate(data["todos"]):
+                cat = todo.get("category", "personal")
+                if filter_cat != "all" and cat != filter_cat:
+                    continue
+                    
+                is_done = todo.get("done", False)
+                task_text = todo.get("task", "")
+                cat_info = CATEGORIES.get(cat, CATEGORIES["personal"])
+                
+                c1, c2, c3 = st.columns([0.5, 8, 1])
+                with c1:
+                    done = st.checkbox("done", is_done, key=f"chk_{i}", label_visibility="collapsed")
+                    if done != is_done:
+                        data["todos"][i]["done"] = done
+                        if done and not is_done:
+                            log_activity()
+                            st.toast(f"⚔️ Ninja slash! Task completed!")
+                        save_data(data)
+                with c2:
+                    style = "text-decoration: line-through; opacity: 0.5;" if is_done else ""
+                    due = todo.get("due")
+                    due_str = f" 📅 {due}" if due else ""
+                    st.markdown(f'''<span style="{style}">{task_text}</span>
+                        <span class="category-tag" style="background:{cat_info['color']}20;color:{cat_info['color']}">{cat_info['emoji']} {cat}</span>
+                        <span style="color:#8b949e;font-size:0.8rem">{due_str}</span>''', unsafe_allow_html=True)
+                with c3:
+                    if st.button("🗑️", key=f"del_{i}"):
+                        data["todos"].pop(i)
+                        save_data(data)
+                        st.rerun()
+    
+    # ===== ANALYTICS TAB =====
+    with tab2:
+        st.subheader("📈 Your Productivity Stats")
+        
+        weekly = get_weekly_stats()
+        monthly = get_monthly_stats()
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown(f'<div class="analytics-card"><h3>{weekly["tasks"]}</h3><p>Tasks This Week</p></div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown(f'<div class="analytics-card"><h3>{weekly["active_days"]}/7</h3><p>Active Days</p></div>', unsafe_allow_html=True)
+        with c3:
+            st.markdown(f'<div class="analytics-card"><h3>{monthly["tasks"]}</h3><p>Tasks This Month</p></div>', unsafe_allow_html=True)
+        with c4:
+            st.markdown(f'<div class="analytics-card"><h3>{monthly["active_days"]}/30</h3><p>Active Days</p></div>', unsafe_allow_html=True)
+        
+        st.write("")
+        
+        # Weekly breakdown chart
+        st.subheader("📊 Last 7 Days")
+        today_dt = datetime.now()
+        week_data = []
+        for i in range(6, -1, -1):
+            d = (today_dt - timedelta(days=i)).strftime("%Y-%m-%d")
+            week_data.append({"day": d[-5:], "tasks": data["activity"].get(d, 0)})
+        
+        st.bar_chart({d["day"]: d["tasks"] for d in week_data})
+        
+        # Missed days alert
+        if weekly["missed"] > 2:
+            st.warning(f"⚠️ You missed {weekly['missed']} days this week. Keep that streak going!")
+        elif weekly["missed"] == 0:
+            st.success("🎉 Perfect week! You logged activity every day!")
+    
+    # ===== HEATMAP TAB =====
+    with tab3:
+        total = sum(data["activity"].values())
+        st.subheader(f"📊 {total} contributions in the last year")
+        render_heatmap()
 
 if __name__ == "__main__":
     main()

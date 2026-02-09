@@ -1,31 +1,46 @@
 {
   "todos": [
     {
-      "task": "Build frontend UI",
-      "done": true
+      "task": "Morning workout",
+      "done": true,
+      "category": "health",
+      "due": null
     },
     {
-      "task": "Add streak counter",
-      "done": true
+      "task": "Complete project report",
+      "done": true,
+      "category": "work",
+      "due": "2026-02-10"
     },
     {
-      "task": "Create heatmap",
-      "done": true
+      "task": "Read 30 pages",
+      "done": false,
+      "category": "learning",
+      "due": null
     },
     {
-      "task": "Workout",
-      "done": true
+      "task": "Call mom",
+      "done": true,
+      "category": "personal",
+      "due": null
+    },
+    {
+      "task": "study",
+      "done": true,
+      "category": "learning",
+      "due": "2026-02-09"
     }
   ],
   "activity": {
-    "2026-02-08": 6,
-    "2026-02-07": 3,
+    "2026-02-09": 7,
+    "2026-02-08": 3,
+    "2026-02-07": 4,
     "2026-02-06": 2,
-    "2026-02-05": 4,
-    "2026-02-04": 1,
-    "2026-02-03": 5,
-    "2026-02-01": 2
+    "2026-02-05": 5,
+    "2026-02-04": 3,
+    "2026-02-03": 4
   },
-  "streak": 6,
-  "last_date": "2026-02-08"
+  "streak": 7,
+  "longest_streak": 7,
+  "last_date": "2026-02-09"
 }

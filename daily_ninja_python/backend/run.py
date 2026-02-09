@@ -22,6 +22,14 @@ def create_app(config_name=None):
     app.register_blueprint(tasks_bp)
     app.register_blueprint(activity_bp)
     
+    @app.route("/")
+    def index():
+        return jsonify(
+            service="Daily Ninja API",
+            version="1.0.0",
+            endpoints=["/health", "/auth/signup", "/auth/login", "/tasks", "/streak", "/heatmap"]
+        )
+    
     @app.route("/health")
     def health():
         return jsonify(status="healthy", service="daily-ninja-api")
