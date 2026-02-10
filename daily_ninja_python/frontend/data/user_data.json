@@ -14,7 +14,7 @@
     },
     {
       "task": "Read 30 pages",
-      "done": false,
+      "done": true,
       "category": "learning",
       "due": null
     },
@@ -38,9 +38,10 @@
     "2026-02-06": 2,
     "2026-02-05": 5,
     "2026-02-04": 3,
-    "2026-02-03": 4
+    "2026-02-03": 4,
+    "2026-02-10": 2
   },
-  "streak": 7,
-  "longest_streak": 7,
-  "last_date": "2026-02-09"
+  "streak": 8,
+  "longest_streak": 8,
+  "last_date": "2026-02-10"
 }

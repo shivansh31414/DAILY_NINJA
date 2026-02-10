@@ -1,40 +1,30 @@
-FROM python:3.11-slim
-
+# Build stage
+FROM python:3.11-slim as builder
 WORKDIR /app
-
-# Install system dependencies (includes ODBC for Azure SQL)
-RUN apt-get update && apt-get install -y \
-    gcc \
-    curl \
-    gnupg2 \
-    postgresql-client \
-    unixodbc-dev \
-    && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
-    && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y msodbcsql18 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ curl gnupg2 unixodbc-dev && \
+    curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
+    curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
+    apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 && \
+    rm -rf /var/lib/apt/lists/*
 COPY requirements/base.txt .
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install --no-cache-dir -r base.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r base.txt
-
-# Copy application
+# Runtime stage
+FROM python:3.11-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl postgresql-client unixodbc && \
+    curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
+    curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
+    apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && mkdir -p /app/instance
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 COPY backend/ ./backend/
 COPY config/ ./config/
-
-# Environment variables
-ENV FLASK_ENV=production
-ENV PORT=8000
-
-# Expose port
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Run Flask app with Gunicorn
-CMD ["gunicorn", "backend.run:app", "--workers", "4", "--bind", "0.0.0.0:8000"]
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+EXPOSE 5000
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 CMD curl -f http://localhost:5000/health || exit 1
+CMD ["gunicorn", "backend.run:app", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "60"]
