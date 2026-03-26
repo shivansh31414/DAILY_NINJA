@@ -145,3 +145,22 @@ If Key Vault references are used, confirm app identity access:
 az webapp identity show --resource-group $AZURE_RESOURCE_GROUP --name daily-ninja-app
 az keyvault show --name daily-ninja-kv --query properties.vaultUri -o tsv
 ```
+
+## Reviewer checklist for this PR
+
+Run these commands from repo root:
+
+```bash
+bash scripts/azure/01_setup_rg_acr.sh
+bash scripts/azure/02_build_push.sh
+bash scripts/azure/03_deploy_webapp.sh
+bash scripts/azure/05_configure_autoscale.sh
+bash scripts/azure/04_verify_deployment.sh
+```
+
+Then confirm:
+
+```bash
+curl -fsS https://daily-ninja-app.azurewebsites.net/health
+python -m pytest daily_ninja_python/tests/integration/test_post_deploy.py -q
+```
