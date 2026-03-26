@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test lint format migrate run-backend run-frontend run-celery docker-build docker-up docker-down run-azure docker-build-azure docker-push-azure azure-help
+.PHONY: help install install-dev test lint format migrate run-backend run-frontend run-celery docker-build docker-up docker-down run-azure docker-build-azure docker-push-azure azure-help azure-acr-setup azure-build-push azure-deploy azure-autoscale azure-verify
 
 help:
 	@echo "Daily Ninja - Development Commands"
@@ -61,3 +61,18 @@ docker-push-azure: ## Push Docker image to Azure
 
 azure-help: ## Show Azure deployment instructions
 	@cat ../docs/AZURE_DEPLOY.md
+
+azure-acr-setup: ## Create Azure resource group and ACR
+	bash ../scripts/azure/01_setup_rg_acr.sh
+
+azure-build-push: ## Build and push image to ACR
+	bash ../scripts/azure/02_build_push.sh
+
+azure-deploy: ## Deploy container to Azure Web App
+	bash ../scripts/azure/03_deploy_webapp.sh
+
+azure-autoscale: ## Configure autoscaling for App Service Plan
+	bash ../scripts/azure/05_configure_autoscale.sh
+
+azure-verify: ## Verify deployed app and run post-deploy integration checks
+	bash ../scripts/azure/04_verify_deployment.sh

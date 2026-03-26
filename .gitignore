@@ -1,2 +1,29 @@
-# Ignore node_modules
+# Node
 node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Virtualenv
+venv/
+.venv/
+env/
+
+# Env files (keep examples only)
+.env
+.env.*
+!.env.example
+
+# Logs and databases
+*.log
+*.db
+*.sqlite3
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

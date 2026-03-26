@@ -1,65 +1,137 @@
-# Azure Pipelines for Daily Ninja SaaS
 trigger:
   branches:
     include:
       - main
-      - master
+
+pr:
+  branches:
+    include:
+      - main
 
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: ubuntu-latest
 
 variables:
   pythonVersion: '3.11'
+  imageRepository: 'daily-ninja'
+  dockerfilePath: 'docker/Dockerfile.azure'
+  azureContainerRegistry: '$(ACR_LOGIN_SERVER)'
 
 stages:
 - stage: Build
+  displayName: Build
   jobs:
-  - job: Build
+  - job: BuildApp
     steps:
     - task: UsePythonVersion@0
       inputs:
         versionSpec: '$(pythonVersion)'
     - script: |
         python -m pip install --upgrade pip
-        pip install -r daily_ninja_python/requirements/base.txt
-      displayName: 'Install dependencies'
-    - script: |
-        echo "Build complete"
-      displayName: 'Build step'
+        pip install -r daily_ninja_python/requirements/prod.txt
+      displayName: Install production dependencies
     - task: PublishBuildArtifacts@1
       inputs:
         PathtoPublish: '$(System.DefaultWorkingDirectory)'
-        ArtifactName: 'drop'
+        ArtifactName: drop
 
 - stage: Test
+  displayName: Test
+  dependsOn: Build
   jobs:
-  - job: Test
+  - job: TestAndQuality
     steps:
     - task: UsePythonVersion@0
       inputs:
         versionSpec: '$(pythonVersion)'
     - script: |
+        python -m pip install --upgrade pip
         pip install -r daily_ninja_python/requirements/dev.txt
-        pytest daily_ninja_python/tests
-      displayName: 'Run tests'
+      displayName: Install development dependencies
+    - script: |
+        black --check daily_ninja_python/backend daily_ninja_python/tests
+        flake8 daily_ninja_python/backend daily_ninja_python/tests
+      displayName: Lint checks
+    - script: |
+        pytest daily_ninja_python/tests -v --cov=daily_ninja_python/backend --cov-report=xml
+      displayName: Pytest with coverage
+    - script: |
+        python -m unittest discover -s daily_ninja_python/tests -p "test*.py"
+      displayName: Unittest discovery
+    - task: PublishCodeCoverageResults@2
+      inputs:
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/coverage.xml'
+        failIfCoverageEmpty: false
 
-- stage: Deploy
+- stage: DockerBuild
+  displayName: Docker Build
   dependsOn: Test
+  jobs:
+  - job: BuildImage
+    steps:
+    - task: Docker@2
+      displayName: Build image
+      inputs:
+        command: build
+        repository: '$(imageRepository)'
+        Dockerfile: '$(dockerfilePath)'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+- stage: Push
+  displayName: Push
+  dependsOn: DockerBuild
   condition: succeeded()
   jobs:
-  - deployment: DeployWeb
-    environment: 'production'
+  - job: PushImage
+    steps:
+    - task: Docker@2
+      displayName: Login to ACR
+      inputs:
+        command: login
+        containerRegistry: '$(ACR_SERVICE_CONNECTION)'
+    - task: Docker@2
+      displayName: Push image
+      inputs:
+        command: push
+        containerRegistry: '$(ACR_SERVICE_CONNECTION)'
+        repository: '$(imageRepository)'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+- stage: Deploy
+  displayName: Deploy
+  dependsOn: Push
+  condition: succeeded()
+  jobs:
+  - deployment: DeployWebApp
+    environment: production
     strategy:
       runOnce:
         deploy:
           steps:
-          - task: AzureWebAppContainer@1
+          - task: AzureCLI@2
+            displayName: Configure app settings and deploy container
             inputs:
-              azureSubscription: '$(AZURE_SUBSCRIPTION)'
-              appName: '$(AZURE_WEBAPP_NAME)'
-              containers: '$(System.DefaultWorkingDirectory)/docker/Dockerfile.azure'
-              configurationStrings: |
-                WEBSITES_PORT=8000
-                APPINSIGHTS_INSTRUMENTATIONKEY=$(APPINSIGHTS_INSTRUMENTATIONKEY)
-              envVariables: |
-                KEY_VAULT_URI=$(KEY_VAULT_URI)
+              azureSubscription: '$(AZURE_SERVICE_CONNECTION)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az webapp config container set \
+                  --resource-group $(AZURE_RESOURCE_GROUP) \
+                  --name $(AZURE_WEBAPP_NAME) \
+                  --container-image-name $(ACR_LOGIN_SERVER)/$(imageRepository):$(Build.BuildId) \
+                  --container-registry-url https://$(ACR_LOGIN_SERVER)
+
+                az webapp config appsettings set \
+                  --resource-group $(AZURE_RESOURCE_GROUP) \
+                  --name $(AZURE_WEBAPP_NAME) \
+                  --settings \
+                    WEBSITES_PORT=8000 \
+                    FLASK_ENV=production \
+                    APPLICATIONINSIGHTS_CONNECTION_STRING="$(APPLICATIONINSIGHTS_CONNECTION_STRING)" \
+                    SECRET_KEY='@Microsoft.KeyVault(SecretUri=$(KV_SECRET_KEY_URI))' \
+                    JWT_SECRET_KEY='@Microsoft.KeyVault(SecretUri=$(KV_JWT_SECRET_KEY_URI))' \
+                    DATABASE_URL='@Microsoft.KeyVault(SecretUri=$(KV_DATABASE_URL_URI))'
