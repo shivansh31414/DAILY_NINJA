@@ -2,34 +2,66 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "appServiceName": { "type": "string" },
-    "keyVaultName": { "type": "string" },
-    "storageName": { "type": "string" },
-    "location": { "type": "string", "defaultValue": "[resourceGroup().location]" }
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "appServiceName": {
+      "type": "string",
+      "defaultValue": "daily-ninja-app"
+    },
+    "planName": {
+      "type": "string",
+      "defaultValue": "daily-ninja-plan"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "defaultValue": "daily-ninja-kv"
+    },
+    "storageName": {
+      "type": "string"
+    },
+    "appInsightsName": {
+      "type": "string",
+      "defaultValue": "daily-ninja-ai"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "defaultValue": "dailyninjaacr.azurecr.io"
+    },
+    "imageName": {
+      "type": "string",
+      "defaultValue": "daily-ninja"
+    },
+    "imageTag": {
+      "type": "string",
+      "defaultValue": "latest"
+    }
   },
   "resources": [
     {
       "type": "Microsoft.Web/serverfarms",
       "apiVersion": "2022-03-01",
-      "name": "[concat(parameters('appServiceName'), '-plan')]",
+      "name": "[parameters('planName')]",
       "location": "[parameters('location')]",
-      "sku": { "name": "B1", "tier": "Basic" }
+      "kind": "linux",
+      "sku": {
+        "name": "S1",
+        "tier": "Standard",
+        "capacity": 1
+      },
+      "properties": {
+        "reserved": true
+      }
     },
     {
-      "type": "Microsoft.Web/sites",
-      "apiVersion": "2022-03-01",
-      "name": "[parameters('appServiceName')]",
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[parameters('appInsightsName')]",
       "location": "[parameters('location')]",
-      "kind": "app,linux,container",
+      "kind": "web",
       "properties": {
-        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', concat(parameters('appServiceName'), '-plan'))]",
-        "siteConfig": {
-          "linuxFxVersion": "DOCKER|<your-acr-login-server>/daily-ninja:latest",
-          "appSettings": [
-            { "name": "KEY_VAULT_URI", "value": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))).vaultUri]" },
-            { "name": "APPINSIGHTS_INSTRUMENTATIONKEY", "value": "[reference(resourceId('Microsoft.Insights/components', concat(parameters('appServiceName'), '-ai'))).InstrumentationKey]" }
-          ]
-        }
+        "Application_Type": "web"
       }
     },
     {
@@ -38,7 +70,10 @@
       "name": "[parameters('keyVaultName')]",
       "location": "[parameters('location')]",
       "properties": {
-        "sku": { "family": "A", "name": "standard" },
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
         "tenantId": "[subscription().tenantId]",
         "accessPolicies": [],
         "enabledForDeployment": true,
@@ -51,16 +86,115 @@
       "apiVersion": "2022-09-01",
       "name": "[parameters('storageName')]",
       "location": "[parameters('location')]",
-      "sku": { "name": "Standard_LRS" },
-      "kind": "StorageV2"
+      "kind": "StorageV2",
+      "sku": {
+        "name": "Standard_LRS"
+      }
     },
     {
-      "type": "Microsoft.Insights/components",
-      "apiVersion": "2020-02-02",
-      "name": "[concat(parameters('appServiceName'), '-ai')]",
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2022-03-01",
+      "name": "[parameters('appServiceName')]",
       "location": "[parameters('location')]",
-      "kind": "web",
-      "properties": { "Application_Type": "web" }
+      "kind": "app,linux,container",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+        "[resourceId('Microsoft.Insights/components', parameters('appInsightsName'))]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+        "siteConfig": {
+          "linuxFxVersion": "[concat('DOCKER|', parameters('acrLoginServer'), '/', parameters('imageName'), ':', parameters('imageTag'))]",
+          "appSettings": [
+            {
+              "name": "WEBSITES_PORT",
+              "value": "8000"
+            },
+            {
+              "name": "FLASK_ENV",
+              "value": "production"
+            },
+            {
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), '2020-02-02').ConnectionString]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Insights/autoscalesettings",
+      "apiVersion": "2022-10-01",
+      "name": "[concat(parameters('planName'), '-autoscale')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]"
+      ],
+      "properties": {
+        "enabled": true,
+        "targetResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+        "profiles": [
+          {
+            "name": "default-profile",
+            "capacity": {
+              "minimum": "1",
+              "default": "1",
+              "maximum": "3"
+            },
+            "rules": [
+              {
+                "metricTrigger": {
+                  "metricName": "CpuPercentage",
+                  "metricResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                  "timeGrain": "PT1M",
+                  "statistic": "Average",
+                  "timeWindow": "PT5M",
+                  "timeAggregation": "Average",
+                  "operator": "GreaterThan",
+                  "threshold": 70
+                },
+                "scaleAction": {
+                  "direction": "Increase",
+                  "type": "ChangeCount",
+                  "value": "1",
+                  "cooldown": "PT5M"
+                }
+              },
+              {
+                "metricTrigger": {
+                  "metricName": "CpuPercentage",
+                  "metricResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                  "timeGrain": "PT1M",
+                  "statistic": "Average",
+                  "timeWindow": "PT10M",
+                  "timeAggregation": "Average",
+                  "operator": "LessThan",
+                  "threshold": 30
+                },
+                "scaleAction": {
+                  "direction": "Decrease",
+                  "type": "ChangeCount",
+                  "value": "1",
+                  "cooldown": "PT10M"
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
-  ]
+  ],
+  "outputs": {
+    "webAppUrl": {
+      "type": "string",
+      "value": "[concat('https://', parameters('appServiceName'), '.azurewebsites.net')]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[parameters('keyVaultName')]"
+    }
+  }
 }

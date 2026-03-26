@@ -1,73 +1,147 @@
 # Deploying Daily Ninja to Azure Web App for Containers
 
 ## Prerequisites
-- Azure CLI installed and logged in
-- Azure subscription and resource group
-- Docker installed (for local builds)
-- (Optional) Azure Container Registry (ACR) if using private images
+- Azure CLI logged in (`az login`)
+- Docker installed
+- Azure DevOps service connections for ACR and Azure subscription
 
-## 1. Build and Push Docker Image
-
-```bash
-# Build Docker image
-cd DAILY_NINJA
-az acr login --name <your-acr-name>
-docker build -f docker/Dockerfile.azure -t <your-acr-login-server>/daily-ninja:latest .
-# Push to ACR
-docker push <your-acr-login-server>/daily-ninja:latest
-```
-
-## 2. Provision Azure Resources (Bicep or ARM)
+## 1. Create Resource Group and ACR
 
 ```bash
-# Bicep
-az deployment group create \
-  --resource-group <your-rg> \
-  --template-file infra/bicep/main.bicep \
-  --parameters appServiceName=<your-app-name> keyVaultName=<your-kv-name> storageName=<yourstorage>
+export AZURE_RESOURCE_GROUP=daily-ninja-rg
+export AZURE_LOCATION=eastus
+export ACR_NAME=dailyninjaacr
 
-# ARM
-az deployment group create \
-  --resource-group <your-rg> \
-  --template-file infra/arm/main.json \
-  --parameters appServiceName=<your-app-name> keyVaultName=<your-kv-name> storageName=<yourstorage>
+az group create --name $AZURE_RESOURCE_GROUP --location $AZURE_LOCATION
+az acr create --resource-group $AZURE_RESOURCE_GROUP --name $ACR_NAME --sku Basic
 ```
 
-## 3. Configure Key Vault Secrets
+Or run:
 
 ```bash
-az keyvault secret set --vault-name <your-kv-name> --name "SECRET_KEY" --value "<your-secret>"
-az keyvault secret set --vault-name <your-kv-name> --name "JWT_SECRET_KEY" --value "<your-jwt-secret>"
-az keyvault secret set --vault-name <your-kv-name> --name "DATABASE_URL" --value "<your-db-url>"
+bash scripts/azure/01_setup_rg_acr.sh
 ```
 
-## 4. Assign Managed Identity to App Service
+## 2. Build, tag, and push image to ACR
 
-- In Azure Portal, enable Managed Identity for your Web App
-- Grant Key Vault access policy for "Get" secrets to the Web App's identity
+```bash
+export IMAGE_NAME=daily-ninja
+export IMAGE_TAG=latest
+bash scripts/azure/02_build_push.sh
+```
 
-## 5. Configure App Settings for Key Vault References
+## 3. Deploy container to Azure Web App for Containers
 
-In the App Service Configuration:
-- Add settings like:
-  - `SECRET_KEY` = `@Microsoft.KeyVault(SecretUri=https://<your-kv-name>.vault.azure.net/secrets/SECRET_KEY/)`
-  - `JWT_SECRET_KEY` = `@Microsoft.KeyVault(SecretUri=https://<your-kv-name>.vault.azure.net/secrets/JWT_SECRET_KEY/)`
-  - `DATABASE_URL` = `@Microsoft.KeyVault(SecretUri=https://<your-kv-name>.vault.azure.net/secrets/DATABASE_URL/)`
+```bash
+export AZURE_WEBAPP_NAME=daily-ninja-app
+export APP_SERVICE_PLAN=daily-ninja-plan
+bash scripts/azure/03_deploy_webapp.sh
+```
 
-## 6. Enable Application Insights
+## 4. Configure environment variables with Key Vault references
 
-- In the App Service Configuration, set `APPINSIGHTS_INSTRUMENTATIONKEY` to the value from your Application Insights resource.
+```bash
+az webapp config appsettings set \
+  --resource-group $AZURE_RESOURCE_GROUP \
+  --name daily-ninja-app \
+  --settings \
+    WEBSITES_PORT=8000 \
+    FLASK_ENV=production \
+    SECRET_KEY="@Microsoft.KeyVault(SecretUri=https://daily-ninja-kv.vault.azure.net/secrets/SECRET_KEY/)" \
+    JWT_SECRET_KEY="@Microsoft.KeyVault(SecretUri=https://daily-ninja-kv.vault.azure.net/secrets/JWT_SECRET_KEY/)" \
+    DATABASE_URL="@Microsoft.KeyVault(SecretUri=https://daily-ninja-kv.vault.azure.net/secrets/DATABASE_URL/)"
+```
 
-## 7. Deploy via Azure Pipelines (CI/CD)
+## 5. Enable logging and monitoring with Application Insights
 
-- Update `azure-pipelines.yml` with your Azure subscription and app name.
-- Commit and push to trigger the pipeline.
+```bash
+az monitor app-insights component create \
+  --app daily-ninja-ai \
+  --location $AZURE_LOCATION \
+  --resource-group $AZURE_RESOURCE_GROUP
 
-## 8. Monitor Logs and Metrics
+APPINSIGHTS_CONNECTION_STRING=$(az monitor app-insights component show \
+  --app daily-ninja-ai \
+  --resource-group $AZURE_RESOURCE_GROUP \
+  --query connectionString -o tsv)
 
-- Use Azure Portal > Application Insights for logs, traces, and metrics.
-- Use `az webapp log tail --name <your-app-name> --resource-group <your-rg>` for live logs.
+az webapp config appsettings set \
+  --resource-group $AZURE_RESOURCE_GROUP \
+  --name daily-ninja-app \
+  --settings APPLICATIONINSIGHTS_CONNECTION_STRING="$APPINSIGHTS_CONNECTION_STRING"
+```
 
----
+## 6. Configure autoscaling for App Service Plan
 
-For more details, see the official [Azure Web App for Containers documentation](https://learn.microsoft.com/azure/app-service/quickstart-custom-container?tabs=python&pivots=container-linux).
+```bash
+bash scripts/azure/05_configure_autoscale.sh
+```
+
+## 7. CI/CD pipeline
+
+`azure-pipelines.yml` includes stages:
+- Build
+- Test (lint + pytest + unittest + coverage)
+- Docker Build
+- Push
+- Deploy
+
+## 8. Verify deployment
+
+Primary URL:
+
+```text
+https://daily-ninja-app.azurewebsites.net
+```
+
+Manual checks:
+
+```bash
+curl -fsS https://daily-ninja-app.azurewebsites.net/health
+curl -fsS https://daily-ninja-app.azurewebsites.net/
+```
+
+Run post-deploy integration tests:
+
+```bash
+export DAILY_NINJA_BASE_URL=https://daily-ninja-app.azurewebsites.net
+python -m pytest daily_ninja_python/tests/integration/test_post_deploy.py -q
+```
+
+Or run:
+
+```bash
+bash scripts/azure/04_verify_deployment.sh
+```
+
+## Troubleshooting if app is unreachable
+
+If `https://daily-ninja-app.azurewebsites.net` does not resolve or returns errors, run:
+
+```bash
+az webapp show --resource-group $AZURE_RESOURCE_GROUP --name daily-ninja-app --query defaultHostName -o tsv
+az webapp config container show --resource-group $AZURE_RESOURCE_GROUP --name daily-ninja-app
+az webapp config appsettings list --resource-group $AZURE_RESOURCE_GROUP --name daily-ninja-app
+az webapp log config --name daily-ninja-app --resource-group $AZURE_RESOURCE_GROUP --docker-container-logging filesystem
+az webapp log tail --name daily-ninja-app --resource-group $AZURE_RESOURCE_GROUP
+```
+
+Validate image availability in ACR:
+
+```bash
+az acr repository list --name $ACR_NAME -o table
+az acr repository show-tags --name $ACR_NAME --repository daily-ninja -o table
+```
+
+Check runtime health endpoint from inside your network path:
+
+```bash
+curl -v https://daily-ninja-app.azurewebsites.net/health
+```
+
+If Key Vault references are used, confirm app identity access:
+
+```bash
+az webapp identity show --resource-group $AZURE_RESOURCE_GROUP --name daily-ninja-app
+az keyvault show --name daily-ninja-kv --query properties.vaultUri -o tsv
+```

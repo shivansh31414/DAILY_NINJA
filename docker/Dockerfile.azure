@@ -1,34 +1,25 @@
-# Azure-optimized Dockerfile for Daily Ninja
-FROM mcr.microsoft.com/python:3.11-slim as base
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends gcc curl unixodbc-dev && rm -rf /var/lib/apt/lists/*
+COPY daily_ninja_python/requirements/prod.txt /tmp/requirements.txt
+RUN pip install --upgrade pip && pip wheel --wheel-dir /wheels -r /tmp/requirements.txt
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    curl \
-    unixodbc-dev \
-    && rm -rf /var/lib/apt/lists/*
+FROM python:3.11-slim
 
-# Copy requirements first for caching
-COPY daily_ninja_python/requirements/base.txt ./
-RUN pip install --upgrade pip && pip install --no-cache-dir -r base.txt
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl unixodbc && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir /wheels/*
 
-# Copy app code
 COPY daily_ninja_python/backend ./backend
 COPY daily_ninja_python/config ./config
 
-# Application Insights
-ENV APPINSIGHTS_INSTRUMENTATIONKEY=""
-RUN pip install opencensus-ext-azure
-
-# Set environment variables for Azure
-ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
+ENV FLASK_ENV=production
+ENV PORT=8000
 
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 CMD curl -fsS http://localhost:8000/health || exit 1
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-CMD ["gunicorn", "backend.run:app", "--bind", "0.0.0.0:8000", "--workers", "4"]
+CMD ["gunicorn", "backend.run:app", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]

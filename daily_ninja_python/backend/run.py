@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.core import config
+from app.core import config, validate_required_env
 from app.models import db
 from app.api import auth_bp, tasks_bp, activity_bp
 
@@ -16,18 +16,26 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
+def configure_application_insights() -> None:
+    conn_str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+    if not conn_str:
+        return
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        configure_azure_monitor(connection_string=conn_str)
+        logger.info("Application Insights enabled")
+    except Exception as exc:
+        logger.warning("Application Insights setup skipped: %s", exc)
+
+
 def create_app(config_name=None):
     """Application factory"""
     app = Flask(__name__)
     config_env = config_name or os.getenv("FLASK_ENV", "development")
     app.config.from_object(config[config_env])
-    
-    # Validate secrets in production
-    if config_env == "production":
-        if not os.getenv("SECRET_KEY") or os.getenv("SECRET_KEY").startswith("dev-"):
-            raise ValueError("SECRET_KEY not configured for production")
-        if not os.getenv("JWT_SECRET_KEY") or os.getenv("JWT_SECRET_KEY").startswith("jwt-"):
-            raise ValueError("JWT_SECRET_KEY not configured for production")
+
+    validate_required_env(config_env)
+    configure_application_insights()
     
     db.init_app(app)
     JWTManager(app)
