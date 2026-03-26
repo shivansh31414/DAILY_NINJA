@@ -1,0 +1,65 @@
+# Azure Pipelines for Daily Ninja SaaS
+trigger:
+  branches:
+    include:
+      - main
+      - master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.11'
+
+stages:
+- stage: Build
+  jobs:
+  - job: Build
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r daily_ninja_python/requirements/base.txt
+      displayName: 'Install dependencies'
+    - script: |
+        echo "Build complete"
+      displayName: 'Build step'
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)'
+        ArtifactName: 'drop'
+
+- stage: Test
+  jobs:
+  - job: Test
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+    - script: |
+        pip install -r daily_ninja_python/requirements/dev.txt
+        pytest daily_ninja_python/tests
+      displayName: 'Run tests'
+
+- stage: Deploy
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - deployment: DeployWeb
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebAppContainer@1
+            inputs:
+              azureSubscription: '$(AZURE_SUBSCRIPTION)'
+              appName: '$(AZURE_WEBAPP_NAME)'
+              containers: '$(System.DefaultWorkingDirectory)/docker/Dockerfile.azure'
+              configurationStrings: |
+                WEBSITES_PORT=8000
+                APPINSIGHTS_INSTRUMENTATIONKEY=$(APPINSIGHTS_INSTRUMENTATIONKEY)
+              envVariables: |
+                KEY_VAULT_URI=$(KEY_VAULT_URI)

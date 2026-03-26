@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test lint format migrate run-backend run-frontend run-celery docker-build docker-up docker-down
+.PHONY: help install install-dev test lint format migrate run-backend run-frontend run-celery docker-build docker-up docker-down run-azure docker-build-azure docker-push-azure azure-help
 
 help:
 	@echo "Daily Ninja - Development Commands"
@@ -47,22 +47,17 @@ run-celery: ## Run Celery worker
 run-scheduler: ## Run APScheduler
 	python -m workers.schedulers.main
 
+run-azure: ## Run backend with Gunicorn for Azure
+	gunicorn backend.run:app --bind 0.0.0.0:8000 --workers 4
+
 docker-build: ## Build Docker images
 	docker-compose -f docker/docker-compose.yml build
 
-docker-up: ## Start Docker services
-	docker-compose -f docker/docker-compose.yml up -d
+docker-build-azure: ## Build Docker image for Azure
+	docker build -f docker/Dockerfile.azure -t daily-ninja:azure .
 
-docker-down: ## Stop Docker services
-	docker-compose -f docker/docker-compose.yml down
+docker-push-azure: ## Push Docker image to Azure
+	docker push daily-ninja:azure
 
-docker-logs: ## View Docker logs
-	docker-compose -f docker/docker-compose.yml logs -f
-
-docker-clean: ## Remove Docker containers and volumes
-	docker-compose -f docker/docker-compose.yml down -v
-
-clean: ## Clean up cache and build artifacts
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
-	rm -rf .pytest_cache .mypy_cache .coverage htmlcov dist build *.egg-info
+azure-help: ## Show Azure deployment instructions
+	@cat ../docs/AZURE_DEPLOY.md

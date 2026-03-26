@@ -25,14 +25,9 @@ dash-bootstrap-components==1.4.2
 plotly==5.18.0
 pandas==2.1.3
 
-# Caching & Real-time
-redis==5.0.1
-aioredis==2.0.1
-
 # Task Queue & Scheduling
-celery==5.3.4
-redis==5.0.1
-apscheduler==3.10.4
+# celery==5.3.4
+# apscheduler==3.10.4
 
 # Authentication
 python-jose[cryptography]==3.3.0
@@ -47,7 +42,5 @@ email-validator==2.1.0
 
 # Logging
 python-json-logger==2.0.7
-
-# Async
-aiohttp==3.9.1
-asyncpg==0.29.0
+opencensus-ext-azure==1.1.9
+opencensus==0.11.4
