@@ -11,9 +11,11 @@ set -euo pipefail
 : "${KEY_VAULT_SECRET_KEY_URI:=https://daily-ninja-kv.vault.azure.net/secrets/SECRET_KEY/}"
 : "${KEY_VAULT_JWT_SECRET_KEY_URI:=https://daily-ninja-kv.vault.azure.net/secrets/JWT_SECRET_KEY/}"
 : "${KEY_VAULT_DATABASE_URL_URI:=https://daily-ninja-kv.vault.azure.net/secrets/DATABASE_URL/}"
+: "${KEY_VAULT_NAME:=daily-ninja-kv}"
 : "${APPLICATIONINSIGHTS_CONNECTION_STRING:=}"
 
 ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query loginServer -o tsv)
+ACR_ID=$(az acr show --name "$ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query id -o tsv)
 
 az appservice plan create \
   --name "$APP_SERVICE_PLAN" \
@@ -27,6 +29,22 @@ az webapp create \
   --plan "$APP_SERVICE_PLAN" \
   --name "$AZURE_WEBAPP_NAME" \
   --deployment-container-image-name "$ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG"
+
+az webapp identity assign \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name "$AZURE_WEBAPP_NAME" >/dev/null
+
+WEBAPP_PRINCIPAL_ID=$(az webapp identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --query principalId -o tsv)
+az role assignment create \
+  --assignee-object-id "$WEBAPP_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --scope "$ACR_ID" \
+  --role AcrPull >/dev/null || true
+
+az keyvault set-policy \
+  --name "$KEY_VAULT_NAME" \
+  --object-id "$WEBAPP_PRINCIPAL_ID" \
+  --secret-permissions get list >/dev/null || true
 
 az webapp config container set \
   --resource-group "$AZURE_RESOURCE_GROUP" \
