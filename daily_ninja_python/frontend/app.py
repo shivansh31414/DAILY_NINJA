@@ -155,6 +155,15 @@ def get_monthly_stats():
     active_days = sum(1 for d in month_dates if data["activity"].get(d, 0) > 0)
     return {"tasks": tasks_done, "active_days": active_days, "missed": 30 - active_days}
 
+
+def get_missed_days_alert(missed_days):
+    """Return alert level/message for weekly missed days."""
+    if missed_days > 2:
+        return "warning", f"⚠️ You missed {missed_days} days this week. Keep that streak going!"
+    if missed_days == 0:
+        return "success", "🎉 Perfect week! You logged activity every day!"
+    return None, None
+
 def get_earned_badges(streak):
     """Get list of badges with earned/locked status."""
     return [{"badge": b, "earned": streak >= b["days"]} for b in BADGES]
@@ -341,10 +350,11 @@ def main():
         st.bar_chart({d["day"]: d["tasks"] for d in week_data})
         
         # Missed days alert
-        if weekly["missed"] > 2:
-            st.warning(f"⚠️ You missed {weekly['missed']} days this week. Keep that streak going!")
-        elif weekly["missed"] == 0:
-            st.success("🎉 Perfect week! You logged activity every day!")
+        alert_kind, alert_message = get_missed_days_alert(weekly["missed"])
+        if alert_kind == "warning":
+            st.warning(alert_message)
+        elif alert_kind == "success":
+            st.success(alert_message)
     
     # ===== HEATMAP TAB =====
     with tab3:
