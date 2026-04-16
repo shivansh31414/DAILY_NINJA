@@ -22,3 +22,4 @@ jobs:
         with:
           app-name: 'dailyninja'
           slot-name: 'Production'
+          
