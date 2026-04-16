@@ -1,8 +1,16 @@
+name: Build and deploy Python app to Azure Web App - dailyninja
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
 jobs:
   deploy:
-    runs-on: ubuntu-latest   # ✅ required runner
+    runs-on: ubuntu-latest
     permissions:
-      contents: read         # only contents needed for checkout
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,4 +30,3 @@ jobs:
         with:
           app-name: 'dailyninja'
           slot-name: 'Production'
-          
